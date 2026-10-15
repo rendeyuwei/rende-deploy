@@ -1,0 +1,27 @@
+# Cutover reference only. install.sh does not copy this into /etc/systemd/system.
+# Diff it against `systemctl cat caiben` first. The unit checked into
+# enamel-recipes still has WorkingDirectory=/opt/caiben and an ExecStart that
+# does not mention current. The receiver only updates the current symlink, so
+# the installed unit must execute /opt/caiben/current or restarts will keep
+# running the old tree.
+#
+# Keep User=caiben unless you also move the sqlite files and /opt/caiben/.env.
+# rende-deploy is the SSH/build account; it is not required to be the runtime user.
+
+[Unit]
+Description=家常菜本
+After=network.target
+
+[Service]
+Type=simple
+User=caiben
+WorkingDirectory=/opt/caiben/current
+EnvironmentFile=/opt/caiben/.env
+ExecStart=/opt/caiben/current/node_modules/.bin/tsx server/src/index.ts
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,6 @@
+# Let the shared deploy user restart only the units named in project configs.
+# Add a line when a new systemd project is onboarded. Do not grant ALL.
+Defaults:rende-deploy !requiretty
+Defaults:rende-deploy env_reset
+Defaults:rende-deploy secure_path="/usr/sbin:/usr/bin:/sbin:/bin"
+rende-deploy ALL=(root) NOPASSWD: /usr/bin/systemctl restart caiben

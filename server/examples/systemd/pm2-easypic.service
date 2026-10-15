@@ -1,0 +1,20 @@
+# Boot the EasyPic PM2 daemon as rende-deploy. Not installed by install.sh.
+# The live process is root's PM2 app easypic-api. Leave that in place until
+# the cutover window. `pm2 save` must be run as rende-deploy with this PM2_HOME
+# after the new daemon has started the app once.
+
+[Unit]
+Description=PM2 easypic-api (rende-deploy)
+After=network.target
+
+[Service]
+Type=forking
+User=rende-deploy
+Environment=PM2_HOME=/opt/easypic/.pm2
+PIDFile=/opt/easypic/.pm2/pm2.pid
+Restart=on-failure
+ExecStart=/usr/bin/pm2 resurrect
+ExecStop=/usr/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,57 @@
+# Thin caller. Copy to the application repo as .github/workflows/deploy.yml.
+# Trigger only on main. Do not add pull_request: a same-repo PR would otherwise
+# be eligible for the secrets below. cancel-in-progress stays false.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rende-deploy-site
+  cancel-in-progress: false
+
+jobs:
+  release:
+    uses: rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main
+    with:
+      project: site
+      node_version: "22"
+      # Uncomment after nginx serves /opt/site/current/dist. Until then the
+      # server-side health_file is the gate, and this public check would hit
+      # whatever still answers https://rende.fun/.
+      # health_url: https://rende.fun/
+    secrets:
+      ECS_HOST: ${{ secrets.ECS_HOST }}
+      ECS_USER: ${{ secrets.ECS_USER }}
+      ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+      ECS_KNOWN_HOSTS: ${{ secrets.ECS_KNOWN_HOSTS }}
+
+# enamel-recipes (project id: recipes), after the caiben unit follows current:
+#   with:
+#     project: recipes
+#     node_version: "22"
+#     health_url: https://rende.fun/recipes/api/health
+#     health_body: '{"ok":true}'
+#
+# shutter-count needs its real test script, not the npm test default:
+#   with:
+#     project: shutter
+#     node_version: "22"
+#     test_command: npm run typecheck && npm test
+#     health_url: https://rende.fun/shutter
+#
+# easy-ncp-pic uses pnpm:
+#   with:
+#     project: easypic
+#     node_version: "22"
+#     cache: pnpm
+#     setup_command: corepack enable && corepack prepare pnpm@9.12.1 --activate
+#     install_command: pnpm install --frozen-lockfile
+#     test_command: pnpm -r test
+#     build_command: EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build
+#     health_url: https://rende.fun/easypic/api/health

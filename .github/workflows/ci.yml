@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
+
+      - name: Shellcheck
+        run: shellcheck server/receive-deploy.sh server/install.sh server/tests/receive-deploy.test.sh
+
+      - name: Receiver tests
+        run: bash server/tests/receive-deploy.test.sh
