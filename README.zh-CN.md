@@ -121,7 +121,7 @@ sudo sshd -t && sudo systemctl reload ssh
 
 1. 审阅 `/etc/rende-deploy/projects/*.conf`。示例对上表四个应用。某个应用第一次部署前先改它的 build 行。装上文件本身不会触发部署。
 2. 在你自己的机器上生成专用密钥：`ssh-keygen -t ed25519 -f rende-deploy -C rende-deploy`。
-3. 在 `/etc/ssh/authorized_keys/rende-deploy`（属主 root，模式 `0600`）放一行，前缀见 `server/examples/authorized_keys.example`：
+3. 在 `/etc/ssh/authorized_keys/rende-deploy`（属主 root，模式 `0644`；sshd 以目标用户身份读取该文件，root 所有的 `0600` 会导致登录 Permission denied）放一行，前缀见 `server/examples/authorized_keys.example`：
 
    ```text
    restrict,command="/usr/local/libexec/rende-deploy/receive-deploy.sh" ssh-ed25519 AAAA... rende-deploy

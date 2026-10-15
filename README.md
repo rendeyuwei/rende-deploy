@@ -123,7 +123,7 @@ Then, still as root:
 
 1. Review `/etc/rende-deploy/projects/*.conf`. The examples match the four apps above. Edit a build line before the first deploy of that app. Installing the file does not deploy anything.
 2. Create a dedicated key on your own machine: `ssh-keygen -t ed25519 -f rende-deploy -C rende-deploy`.
-3. Put one line in `/etc/ssh/authorized_keys/rende-deploy` (mode `0600`, root-owned), using the prefix in `server/examples/authorized_keys.example`:
+3. Put one line in `/etc/ssh/authorized_keys/rende-deploy` (root-owned, mode `0644` — sshd reads it as the target user, so `0600` root-owned makes login fail with "Permission denied"), using the prefix in `server/examples/authorized_keys.example`:
 
    ```text
    restrict,command="/usr/local/libexec/rende-deploy/receive-deploy.sh" ssh-ed25519 AAAA... rende-deploy
