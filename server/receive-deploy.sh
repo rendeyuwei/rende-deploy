@@ -322,9 +322,11 @@ export npm_config_fund=false
 export npm_config_update_notifier=false
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 # Do not read ~/.npmrc. Truncate a receiver-owned file immediately before build.
+# npm refuses to load the same file as both user and global config, so use two.
 : > "${root}/.receiver-npmrc"
+: > "${root}/.receiver-npmrc-global"
 export npm_config_userconfig=${root}/.receiver-npmrc
-export NPM_CONFIG_GLOBALCONFIG=${root}/.receiver-npmrc
+export NPM_CONFIG_GLOBALCONFIG=${root}/.receiver-npmrc-global
 
 if ! (
   cd -- "${release}"
