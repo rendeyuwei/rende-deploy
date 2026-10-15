@@ -1,0 +1,21 @@
+# Boot the shutter PM2 daemon as rende-deploy. Not installed by install.sh.
+# After the first successful `pm2 startOrRestart` of the ecosystem file:
+#   sudo -u rende-deploy env PM2_HOME=/opt/shutter-count/.pm2 pm2 save
+# Install and enable this unit only during the shutter cutover, and disable
+# the old pm2-shutter-deploy unit in the same window.
+
+[Unit]
+Description=PM2 shutter-count (rende-deploy)
+After=network.target
+
+[Service]
+Type=forking
+User=rende-deploy
+Environment=PM2_HOME=/opt/shutter-count/.pm2
+PIDFile=/opt/shutter-count/.pm2/pm2.pid
+Restart=on-failure
+ExecStart=/usr/bin/pm2 resurrect
+ExecStop=/usr/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target

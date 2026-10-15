@@ -1,0 +1,186 @@
+name: deploy-project
+
+# Reusable test-then-deploy workflow.
+# Callers pass the project id. The SSH step sends only:
+#   deploy <project> <40-hex-sha>
+# The server fetches that commit itself. This file has no deploy kill switch.
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: Project id. Must match /etc/rende-deploy/projects/<id>.conf on the server.
+        required: true
+        type: string
+      node_version:
+        description: Node.js version for the test job. Digits and dots only, for example 22.
+        required: false
+        type: string
+        default: "22"
+      health_url:
+        description: Optional public https URL checked from the runner after the server accepts the deploy.
+        required: false
+        type: string
+        default: ""
+      health_body:
+        description: Optional exact response body for health_url, after stripping one trailing newline.
+        required: false
+        type: string
+        default: ""
+      cache:
+        description: actions/setup-node cache mode. One of npm, yarn, pnpm.
+        required: false
+        type: string
+        default: npm
+      setup_command:
+        description: Optional shell run after setup-node. Use it for corepack/pnpm.
+        required: false
+        type: string
+        default: ""
+      install_command:
+        description: Install command. Empty skips the step.
+        required: false
+        type: string
+        default: npm ci --no-audit --no-fund
+      test_command:
+        description: Test command. Empty skips the step.
+        required: false
+        type: string
+        default: npm test
+      build_command:
+        description: Build command run on the runner. Empty skips the step. The server build is separate.
+        required: false
+        type: string
+        default: npm run build
+    secrets:
+      ECS_HOST:
+        required: true
+      ECS_USER:
+        required: true
+      ECS_SSH_KEY:
+        required: true
+      ECS_KNOWN_HOSTS:
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rende-deploy-${{ inputs.project }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate inputs
+        env:
+          PROJECT: ${{ inputs.project }}
+          NODE_VERSION: ${{ inputs.node_version }}
+          CACHE: ${{ inputs.cache }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" =~ ^[a-z][a-z0-9-]{0,31}$ ]] || {
+            echo "project must match [a-z][a-z0-9-]{0,31}" >&2
+            exit 1
+          }
+          [[ "$NODE_VERSION" =~ ^[0-9]+(\.[0-9]+){0,2}$ ]] || {
+            echo "node_version must be numeric, for example 22 or 22.12.0" >&2
+            exit 1
+          }
+          [[ "$CACHE" =~ ^(npm|yarn|pnpm)$ ]] || {
+            echo "cache must be npm, yarn, or pnpm" >&2
+            exit 1
+          }
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node_version }}
+          package-manager-cache: false
+          cache: ${{ inputs.cache }}
+
+      - name: Setup
+        if: inputs.setup_command != ''
+        run: ${{ inputs.setup_command }}
+
+      - name: Install
+        if: inputs.install_command != ''
+        run: ${{ inputs.install_command }}
+
+      - name: Test
+        if: inputs.test_command != ''
+        run: ${{ inputs.test_command }}
+
+      - name: Build
+        if: inputs.build_command != ''
+        run: ${{ inputs.build_command }}
+
+  deploy:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Refuse anything except main
+        if: github.ref != 'refs/heads/main'
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          printf 'refusing to deploy %s; callers must invoke this on main\n' "$REF" >&2
+          exit 1
+
+      - name: Ask the ECS receiver to deploy this commit
+        env:
+          PROJECT: ${{ inputs.project }}
+          ECS_HOST: ${{ secrets.ECS_HOST }}
+          ECS_USER: ${{ secrets.ECS_USER }}
+          ECS_SSH_KEY: ${{ secrets.ECS_SSH_KEY }}
+          ECS_KNOWN_HOSTS: ${{ secrets.ECS_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$PROJECT" =~ ^[a-z][a-z0-9-]{0,31}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$ECS_USER" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]
+          [[ "$ECS_HOST" =~ ^[A-Za-z0-9._:-]+$ ]]
+          [[ -n "$ECS_SSH_KEY" && -n "$ECS_KNOWN_HOSTS" ]]
+          install -m 700 -d ~/.ssh
+          key="$HOME/.ssh/id"
+          trap 'rm -f "$key"' EXIT
+          printf '%s\n' "$ECS_SSH_KEY" > "$key"
+          chmod 600 "$key"
+          printf '%s\n' "$ECS_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+          ssh -i "$key" -n -T \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts" \
+            -o GlobalKnownHostsFile=/dev/null \
+            -o ConnectTimeout=20 \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=10 \
+            "$ECS_USER@$ECS_HOST" \
+            "deploy $PROJECT $GITHUB_SHA"
+
+      - name: Check public health
+        if: inputs.health_url != ''
+        env:
+          HEALTH_URL: ${{ inputs.health_url }}
+          HEALTH_BODY: ${{ inputs.health_body }}
+        run: |
+          set -euo pipefail
+          [[ "$HEALTH_URL" =~ ^https://[A-Za-z0-9._:/-]+$ ]] || {
+            echo "health_url must be an https URL without a query string" >&2
+            exit 1
+          }
+          if [[ -n "$HEALTH_BODY" ]]; then
+            body=$(curl -fsS --retry 5 --retry-delay 2 --retry-all-errors -m 10 -- "$HEALTH_URL")
+            body=${body//$'\r'/}
+            body=${body%$'\n'}
+            [[ "$body" == "$HEALTH_BODY" ]]
+          else
+            curl -fsS --retry 5 --retry-delay 2 --retry-all-errors -m 10 -o /dev/null -- "$HEALTH_URL"
+          fi
