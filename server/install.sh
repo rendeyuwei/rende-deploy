@@ -98,10 +98,11 @@ while IFS= read -r proj_root; do
 done < <(sed -n 's/^root=//p' "${src}/examples/projects/"*.conf)
 
 if [[ ! -e ${keys}/rende-deploy ]]; then
-  install -o root -g root -m 0600 /dev/null "${keys}/rende-deploy"
+  install -o root -g root -m 0644 /dev/null "${keys}/rende-deploy"
   printf 'created empty %s\n' "${keys}/rende-deploy"
 else
-  printf 'keeping existing %s\n' "${keys}/rende-deploy"
+  chmod 0644 -- "${keys}/rende-deploy"
+  printf 'keeping existing %s (mode set to 0644)\n' "${keys}/rende-deploy"
 fi
 
 if (( apply_sshd == 1 )); then
