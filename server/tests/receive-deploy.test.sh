@@ -253,6 +253,18 @@ static_conf "${cfg}/site.conf" "${proj}" "build=false"
 expect_fail 'build failure leaves current' 'build failed' \
   env RENDE_DEPLOY_TEST=1 RENDE_DEPLOY_CONFIG_DIR="${cfg}" "${receiver}" deploy site "${sha}"
 [[ $(readlink -f "${proj}/current") == "${target}" ]] || fail 'current moved after build failure'
+half_built=$(find "${proj}/releases" -mindepth 1 -maxdepth 1 -type d ! -path "${target}" | wc -l)
+[[ ${half_built} -eq 0 ]] || fail "half-built release was kept (${half_built})"
+
+cfg_half=${tmp}/cfg-half
+proj_half=${tmp}/opt-half
+mkdir -p "${proj_half}"
+static_conf "${cfg_half}/site.conf" "${proj_half}" "build=mkdir -p node_modules && false"
+expect_fail 'failed first build removes half-built release' 'build failed' \
+  env RENDE_DEPLOY_TEST=1 RENDE_DEPLOY_CONFIG_DIR="${cfg_half}" "${receiver}" deploy site "${sha}"
+half_count=$(find "${proj_half}/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[[ ${half_count} -eq 0 ]] || fail "half-built release was kept (${half_count})"
+[[ ! -e ${proj_half}/current ]] || fail 'failed first build created current'
 
 static_conf "${cfg}/site.conf" "${proj}" "build=mkdir -p dist"
 expect_fail 'missing health file leaves current' 'health file missing: dist/index.html' \
@@ -377,6 +389,54 @@ out=$(env RENDE_DEPLOY_TEST=1 RENDE_DEPLOY_TEST_PATH="${wrapper}" RENDE_DEPLOY_C
 [[ ${out} == *'git fetch attempt 2 failed'* ]] || fail "missing second retry: ${out}"
 [[ ${out} == *"Deployed site ${sha_c}"* ]] || fail "retry did not deploy: ${out}"
 printf 'ok fetch retries then succeeds\n'
+
+npm_bin=$(command -v npm || true)
+[[ -n ${npm_bin} ]] || fail 'npm is required to reproduce double-loading config'
+npm_dir=$(dirname -- "${npm_bin}")
+same_npmrc=${tmp}/double-npmrc
+: > "${same_npmrc}"
+set +e
+double_out=$(npm_config_userconfig="${same_npmrc}" NPM_CONFIG_GLOBALCONFIG="${same_npmrc}" "${npm_bin}" --version 2>&1)
+double_code=$?
+set -e
+[[ ${double_code} -ne 0 ]] || fail "same-file npm config unexpectedly succeeded: ${double_out}"
+[[ ${double_out} == *'double-loading config'*'as "global", previously loaded as "user"'* ]] \
+  || fail "npm did not reproduce double-load: ${double_out}"
+printf 'ok npm double-load reproduced\n'
+
+cfg_npm=${tmp}/cfg-npm
+proj_npm=${tmp}/opt-npm
+mkdir -p "${proj_npm}"
+static_conf "${cfg_npm}/site.conf" "${proj_npm}" \
+  "build=npm --version && mkdir -p dist && touch dist/index.html"
+set +e
+npm_out=$(env RENDE_DEPLOY_TEST=1 RENDE_DEPLOY_TEST_PATH="${npm_dir}" RENDE_DEPLOY_CONFIG_DIR="${cfg_npm}" \
+  "${receiver}" deploy site "${sha_c}" 2>&1)
+npm_code=$?
+set -e
+[[ ${npm_code} -eq 0 ]] || fail "npm deploy failed (${npm_code}): ${npm_out}"
+[[ ${npm_out} != *'double-loading config'* ]] || fail "receiver double-loaded npm config: ${npm_out}"
+[[ ${npm_out} == *"Deployed site ${sha_c}"* ]] || fail "npm deploy missing success line: ${npm_out}"
+[[ -f ${proj_npm}/.receiver-npmrc && -f ${proj_npm}/.receiver-npmrc-global ]] \
+  || fail 'receiver npmrc files missing'
+[[ ! ${proj_npm}/.receiver-npmrc -ef ${proj_npm}/.receiver-npmrc-global ]] \
+  || fail 'user and global npmrc are the same file'
+printf 'ok npm user and global configs stay separate\n'
+
+if grep -q 'PermitUserEnvironment' "${root_dir}/server/examples/sshd/rende-deploy.conf"; then
+  fail 'PermitUserEnvironment inside the Match block makes sshd -t fail'
+fi
+# shellcheck disable=SC2016
+pattern_create='-m 0644 /dev/null "${keys}/rende-deploy"'
+# shellcheck disable=SC2016
+pattern_keep='chmod 0644 -- "${keys}/rende-deploy"'
+grep -q -F -- "${pattern_create}" "${install}" \
+  || fail 'authorized_keys must be created mode 0644'
+grep -q -F -- "${pattern_keep}" "${install}" \
+  || fail 'existing authorized_keys must be chmod 0644'
+grep -q 'mode 0644' "${root_dir}/server/examples/authorized_keys.example" \
+  || fail 'authorized_keys.example must document mode 0644'
+printf 'ok sshd drop-in and authorized_keys mode\n'
 
 build_re='^[A-Za-z0-9 _./:=@&+-]+$'
 for example in "${root_dir}/server/examples/projects/"*.conf; do
