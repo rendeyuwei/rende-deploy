@@ -384,15 +384,23 @@ restart_service() {
 }
 
 http_healthy_once() {
-  local body
-  if [[ -n ${health_body} ]]; then
-    body=$(curl -fsS -m "${health_timeout}" -- "${health_url}") || return 1
-    body=${body//$'\r'/}
-    body=${body%$'\n'}
-    [[ ${body} == "${health_body}" ]]
-  else
-    curl -fsS -m "${health_timeout}" -o /dev/null -- "${health_url}"
+  local body code tmp
+  # curl -f accepts 3xx. Only a 2xx response is a successful health check.
+  tmp=$(mktemp)
+  code=$(curl -sS -m "${health_timeout}" -o "${tmp}" -w '%{http_code}' -- "${health_url}") || code=""
+  if [[ ! ${code} =~ ^2[0-9][0-9]$ ]]; then
+    rm -f -- "${tmp}"
+    return 1
   fi
+  if [[ -z ${health_body} ]]; then
+    rm -f -- "${tmp}"
+    return 0
+  fi
+  body=$(<"${tmp}")
+  rm -f -- "${tmp}"
+  body=${body//$'\r'/}
+  body=${body%$'\n'}
+  [[ ${body} == "${health_body}" ]]
 }
 
 healthy() {

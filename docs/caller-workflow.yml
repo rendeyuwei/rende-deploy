@@ -1,6 +1,9 @@
 # Thin caller. Copy to the application repo as .github/workflows/deploy.yml.
 # Trigger only on main. Do not add pull_request: a same-repo PR would otherwise
 # be eligible for the secrets below. cancel-in-progress stays false.
+# Do not set group to rende-deploy-<project>. deploy-project.yml already uses
+# that group. The same name deadlocks: this caller waits for the called
+# workflow, and the called workflow waits for this caller.
 name: deploy
 
 on:
@@ -12,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: rende-deploy-site
+  group: deploy-site
   cancel-in-progress: false
 
 jobs:
@@ -43,7 +46,7 @@ jobs:
 #     project: shutter
 #     node_version: "22"
 #     test_command: npm run typecheck && npm test
-#     health_url: https://rende.fun/shutter
+#     health_url: https://rende.fun/shutter/
 #
 # easy-ncp-pic uses pnpm:
 #   with:

@@ -60,7 +60,7 @@ The receiver will not run as root. Config files must be owned by root and not gr
 
 GitHub fetch uses the same knobs as the current caiben receiver, because fetch from this ECS is flaky: up to 5 attempts, `timeout 300`, `http.lowSpeedLimit=1000`, `http.lowSpeedTime=60`, and a 10/20/30/40 second backoff. User and system git config are ignored so `~/.gitconfig` cannot rewrite the URL. `~/.npmrc` is not read.
 
-Each project has its own `flock` (`<root>/.deploy.lock`, wait up to 10 minutes) and its own rate limit (`min_interval`, default 30 seconds, stamped when a deploy starts). GitHub Actions concurrency uses `cancel-in-progress: false`, so a newer push waits. It does not abort the one already on the server.
+Each project has its own `flock` (`<root>/.deploy.lock`, wait up to 10 minutes) and its own rate limit (`min_interval`, default 30 seconds, stamped when a deploy starts). GitHub Actions concurrency uses `cancel-in-progress: false`, so a newer push waits. It does not abort the one already on the server. Caller workflows must not use the concurrency group `rende-deploy-<project>`. That name belongs to the reusable workflow, and reusing it deadlocks the deploy.
 
 On success the script prints `Deployed <project> <sha>`. `current` points at the release directory. `previous` points at the release that was current before. A failed build never moves `current`. A failed health check or process restart points `current` back at `previous` and deletes the failed release. The first deploy has nothing to restore, so a failed health check removes `current`. Releases except `current` and `previous` are pruned to `keep` (default 5). Each release contains `REVISION`. If `publish_subdir` is set, the same sha is also written to `<publish_subdir>/REVISION`.
 
@@ -74,7 +74,7 @@ Pin the reusable workflow by branch in the caller, the same way the other rende.
 uses: rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main
 ```
 
-The copy-paste wrapper is [`docs/caller-workflow.yml`](docs/caller-workflow.yml). Trigger it on `push` to `main` and `workflow_dispatch` only. Do not run it on `pull_request`. Set the caller's concurrency group to `cancel-in-progress: false`.
+The copy-paste wrapper is [`docs/caller-workflow.yml`](docs/caller-workflow.yml). Trigger it on `push` to `main` and `workflow_dispatch` only. Do not run it on `pull_request`. Keep the caller's own concurrency group at `cancel-in-progress: false`, and do not name that group `rende-deploy-<project>`. `deploy-project.yml` already uses `rende-deploy-<project>`. A caller with the same group waits for the called workflow, the called workflow waits for the caller, and the deploy never starts.
 
 Inputs:
 
@@ -131,7 +131,7 @@ Then, still as root:
 
 4. Store the private key as `ECS_SSH_KEY` in each caller. Store the user `rende-deploy`, the host, and the host key you verified from the ECS console.
 5. Confirm the app unit executes the `current` symlink. `server/install.sh` does not install unit files. `server/examples/systemd/caiben.service` is a reference: the unit in the enamel-recipes repo still has `WorkingDirectory=/opt/caiben` and an `ExecStart` that does not mention `current`. Compare with `systemctl cat caiben` before replacing anything. Leave `User=caiben` unless you also move `/opt/caiben/.env` and the sqlite directory.
-6. `/etc/sudoers.d/rende-deploy` allows only `systemctl restart caiben`. Add a unit only by editing that file with `visudo`. PM2 apps are restarted as `rende-deploy` and do not need sudo.
+6. `/etc/sudoers.d/rende-deploy` allows only `/usr/bin/systemctl restart -- caiben`. The receiver passes `--`, so a line without it does not match. Add a unit only by editing that file with `visudo`. `install.sh` does not rewrite an existing sudoers file. PM2 apps are restarted as `rende-deploy` and do not need sudo. A boot unit for a PM2 app is `server/examples/systemd/pm2-<project>.service`: `User=rende-deploy` and `PM2_HOME=/opt/<project>/.pm2`. `install.sh` does not install unit files.
 7. Reject a bad command before you trust the key:
 
    ```bash
@@ -150,9 +150,9 @@ Do these one app at a time, after the receiver is installed. Do not point a call
 
 **site.** `service=none`. The build is `npm ci --no-audit --no-fund && npm run build`. nginx's apex `location /` for `rende.fun` still uses `root /var/www/html`. After the first deploy has created `/opt/site/current/dist`, change that one location as in `server/examples/nginx/site-root.conf`, without dropping the easypic, shutter, or recipes includes. Then set `health_url=https://rende.fun/` in the project config and in the caller. Leave it unset until then: a public 200 from the old document root would not prove this release is the one being served, and a 404 would roll the release back.
 
-**recipes.** Build is `npm ci` and `npm run build`. Restart is `sudo -n systemctl restart caiben`. Health is the loopback URL and the exact body `{"ok":true}`. Keep `EnvironmentFile=/opt/caiben/.env` and an absolute `DATA_DIR` outside `releases/`. The runtime user can stay `caiben`; world-readable release files are enough for it to execute `tsx`. The existing `caiben-deploy` SSH account can be retired only after a deploy through `rende-deploy` has passed this health check.
+**recipes.** Build is `npm ci` and `npm run build`. Restart is `sudo -n /usr/bin/systemctl restart -- caiben`. Health is the loopback URL and the exact body `{"ok":true}`. Keep `EnvironmentFile=/opt/caiben/.env` and an absolute `DATA_DIR` outside `releases/`. The runtime user can stay `caiben`; world-readable release files are enough for it to execute `tsx`. The existing `caiben-deploy` SSH account can be retired only after a deploy through `rende-deploy` has passed this health check.
 
-**shutter.** PM2 app name is `shutter-count`. The example ecosystem `server/examples/pm2/shutter-count.cjs` uses `cwd` `/opt/shutter-count/current` and `script` `bin/start.mjs`. The repo's `npm start` is `node dist/src/main.js`. Use the path `pm2 show shutter-count` actually runs, then `pm2 startOrRestart` that ecosystem as `rende-deploy` with `PM2_HOME=/opt/shutter-count/.pm2`. The boot unit `server/examples/systemd/pm2-shutter-count.service` is optional and is not installed automatically. The live shutter receiver also checks the GitHub Actions run id; this shared receiver does not. Cut over only when the loopback check on port 3020 is enough.
+**shutter.** PM2 app name is `shutter-count`. The example ecosystem `server/examples/pm2/shutter-count.config.cjs` uses `cwd` `/opt/shutter-count/current`, `script` `bin/start.mjs`, and `interpreter` `/opt/node-v22.23.2-linux-x64/bin/node`. The filename has to be `*.config.cjs` or `ecosystem*`. PM2 runs any other `.cjs` as a script, and the app never starts. Env placeholders match the app defaults: `MAX_UPLOAD_MB=50`, `TRUST_PROXY=127.0.0.1,::1`, `SHUTTER_APP_DIR=/opt/shutter-count/current`. The repo's `npm start` is `node dist/src/main.js`. Use the path `pm2 show shutter-count` actually runs, then `pm2 startOrRestart` that ecosystem as `rende-deploy` with `PM2_HOME=/opt/shutter-count/.pm2`. The loopback health URL is `http://127.0.0.1:3020/shutter/api/health`. `GET /shutter` returns 308, and curl treats that as success. The boot unit `server/examples/systemd/pm2-<project>.service` (or `pm2-shutter-count.service`) runs PM2 as `rende-deploy` with `PM2_HOME=/opt/shutter-count/.pm2`. It is not installed automatically. The live shutter receiver also checks the GitHub Actions run id; this shared receiver does not.
 
 **easypic.** The live process is root's PM2 app `easypic-api` on `127.0.0.1:3010`. nginx serves HTML from `/var/www/easypic`, not from the release tree. This receiver restarts PM2 from `/opt/easypic/current` and does not rsync into `/var/www`. Static files stay stale until the nginx locations point at the release (or you add a copy step you are willing to let this user run). `/etc/easypic/easypic.env` is mode `0600` root; `deploy/start-api.sh` sources it, so `rende-deploy` must be able to read it before the new PM2 daemon will start. Leave the root PM2 process in place until that cutover.
 
@@ -162,7 +162,7 @@ Do these one app at a time, after the receiver is installed. Do not point a call
 2. Add `/etc/rende-deploy/projects/<id>.conf`. Required keys: `root`, `repo_url`, `service`, `build`, and at least one of `health_url` or `health_file`. `repo_url` is `https://github.com/<owner>/<repo>.git`. The branch is always `main`.
 3. `service` is `none`, `systemd`, or `pm2`.
    - `systemd` needs `unit`. The unit name must be listed in `/etc/sudoers.d/rende-deploy`.
-   - `pm2` needs `pm2_app` and `pm2_home` inside `root`. Optional `pm2_ecosystem` must live under `/etc/rende-deploy/pm2/` or inside `root`, and must already exist.
+   - `pm2` needs `pm2_app` and `pm2_home` inside `root`. Optional `pm2_ecosystem` must live under `/etc/rende-deploy/pm2/` or inside `root`, must already exist, and must be named `*.config.cjs` or `ecosystem*`. Copy `server/examples/systemd/pm2-<project>.service` to boot that daemon as `rende-deploy` with `PM2_HOME=/opt/<project>/.pm2`.
 4. Put a wrapper workflow in the app repo. Reuse the four `ECS_*` secrets.
 5. Deploy once and read `Deployed <id> <sha>` plus the health check. Confirm `readlink -f /opt/<name>/current` is the new release and that `previous` still starts.
 
@@ -175,6 +175,6 @@ bash server/tests/receive-deploy.test.sh
 shellcheck server/receive-deploy.sh server/install.sh server/tests/receive-deploy.test.sh
 ```
 
-The tests cover command parsing, config rejection, a static deploy, build failure, health-file failure, HTTP health with an exact body, rollback, a sha that is no longer on `main`, the rate limit, `flock`, pruning, fetch retries, and a poisoned `~/.gitconfig`. They do not SSH anywhere. Test mode is refused when `SSH_CONNECTION` is set.
+The tests cover command parsing, config rejection, a static deploy, build failure, health-file failure, HTTP health with an exact body, rejection of HTTP 3xx, rollback, a sha that is no longer on `main`, the rate limit, `flock`, pruning, fetch retries, and a poisoned `~/.gitconfig`. They do not SSH anywhere. Test mode is refused when `SSH_CONNECTION` is set.
 
 GitHub fetch backoff is skipped in test mode so retries stay instant. Production waits `attempt * 10` seconds between fetches.

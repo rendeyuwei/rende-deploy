@@ -324,6 +324,95 @@ expect_fail 'reject commit not on main' 'commit is not on main' \
 [[ $(readlink -f "${proj}/current") == "${good}" ]] || fail 'not-on-main deploy moved current'
 git -C "${tmp}/repo" update-ref refs/heads/main "${sha_c}"
 
+python3 - <<PY &
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+class Handler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/ok"):
+            status = 200
+            location = None
+        else:
+            status = 308
+            location = self.path + "/"
+        body = b'{"ok":true}'
+        self.send_response(status)
+        if location:
+            self.send_header("Location", location)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+    def log_message(self, fmt, *args):
+        return
+server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+open("${tmp}/redir-port", "w").write(str(server.server_address[1]))
+server.serve_forever()
+PY
+server_pid=$!
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  [[ -s ${tmp}/redir-port ]] && break
+  sleep 0.1
+done
+redir_port=$(<"${tmp}/redir-port")
+[[ -n ${redir_port} ]] || fail 'redirect server did not start'
+
+set +e
+curl -fsS -m 3 -o /dev/null -- "http://127.0.0.1:${redir_port}/shutter"
+curl_308=$?
+set -e
+[[ ${curl_308} -eq 0 ]] || fail "curl -f unexpectedly rejected 308 (${curl_308})"
+printf 'ok curl -f accepts 308\n'
+
+cfg_redir=${tmp}/cfg-redir
+proj_redir=${tmp}/opt-redir
+mkdir -p "${proj_redir}"
+static_conf "${cfg_redir}/site.conf" "${proj_redir}" \
+  "health_url=http://127.0.0.1:${redir_port}/shutter" \
+  "health_file="
+expect_fail 'http 308 is not healthy' 'Health check failed; rolling back' \
+  env RENDE_DEPLOY_TEST=1 RENDE_DEPLOY_CONFIG_DIR="${cfg_redir}" "${receiver}" deploy site "${sha_c}"
+[[ ! -e ${proj_redir}/current ]] || fail '308 health check left current in place'
+redir_left=$(find "${proj_redir}/releases" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[[ ${redir_left} -eq 0 ]] || fail "308 health check kept the release (${redir_left})"
+
+# Mirrors the status check in .github/workflows/deploy-project.yml.
+public_health() {
+  local url=$1
+  local expect_body=${2:-}
+  local code body tmp status
+  tmp=$(mktemp)
+  status=0
+  code=$(curl -fsS --retry 5 --retry-delay 2 --retry-all-errors -m 10 \
+    -o "${tmp}" -w '%{http_code}' -- "${url}") || status=$?
+  if [[ ${status} -ne 0 ]]; then
+    rm -f -- "${tmp}"
+    return 1
+  fi
+  if [[ ! ${code} =~ ^2[0-9][0-9]$ ]]; then
+    rm -f -- "${tmp}"
+    printf 'health_url returned HTTP %s; only 2xx is success\n' "${code}" >&2
+    return 1
+  fi
+  if [[ -n ${expect_body} ]]; then
+    body=$(<"${tmp}")
+    body=${body//$'\r'/}
+    body=${body%$'\n'}
+    rm -f -- "${tmp}"
+    [[ ${body} == "${expect_body}" ]]
+  else
+    rm -f -- "${tmp}"
+  fi
+}
+public_health "http://127.0.0.1:${redir_port}/ok" '{"ok":true}' \
+  || fail 'public health rejected 200'
+if public_health "http://127.0.0.1:${redir_port}/shutter" '{"ok":true}' 2>/dev/null; then
+  fail 'public health accepted 308'
+fi
+printf 'ok public health rejects 3xx\n'
+kill "${server_pid}" 2>/dev/null || true
+wait "${server_pid}" 2>/dev/null || true
+server_pid=""
+
 cfg=${tmp}/cfg-rate
 proj=${tmp}/opt-rate
 mkdir -p "${proj}"
@@ -437,6 +526,42 @@ grep -q -F -- "${pattern_keep}" "${install}" \
 grep -q 'mode 0644' "${root_dir}/server/examples/authorized_keys.example" \
   || fail 'authorized_keys.example must document mode 0644'
 printf 'ok sshd drop-in and authorized_keys mode\n'
+
+grep -q 'systemctl restart -- caiben' "${root_dir}/server/examples/sudoers.d/rende-deploy" \
+  || fail 'sudoers must allow systemctl restart -- caiben'
+[[ -f ${root_dir}/server/examples/pm2/shutter-count.config.cjs ]] \
+  || fail 'shutter ecosystem must be named *.config.cjs'
+[[ -f ${root_dir}/server/examples/pm2/easypic-api.config.cjs ]] \
+  || fail 'easypic ecosystem must be named *.config.cjs'
+[[ ! -e ${root_dir}/server/examples/pm2/shutter-count.cjs ]] \
+  || fail 'old shutter-count.cjs name is still present'
+grep -q 'shutter-count.config.cjs' "${root_dir}/server/examples/projects/shutter.conf" \
+  || fail 'shutter.conf must point at shutter-count.config.cjs'
+grep -q 'easypic-api.config.cjs' "${root_dir}/server/examples/projects/easypic.conf" \
+  || fail 'easypic.conf must point at easypic-api.config.cjs'
+grep -q 'health_url=http://127.0.0.1:3020/shutter/api/health' \
+  "${root_dir}/server/examples/projects/shutter.conf" \
+  || fail 'shutter health_url must be /shutter/api/health'
+grep -q 'MAX_UPLOAD_MB' "${root_dir}/server/examples/pm2/shutter-count.config.cjs" \
+  || fail 'shutter ecosystem missing MAX_UPLOAD_MB'
+grep -q 'TRUST_PROXY' "${root_dir}/server/examples/pm2/shutter-count.config.cjs" \
+  || fail 'shutter ecosystem missing TRUST_PROXY'
+grep -q 'SHUTTER_APP_DIR' "${root_dir}/server/examples/pm2/shutter-count.config.cjs" \
+  || fail 'shutter ecosystem missing SHUTTER_APP_DIR'
+grep -q 'node-v22.23.2-linux-x64/bin/node' \
+  "${root_dir}/server/examples/pm2/shutter-count.config.cjs" \
+  || fail 'shutter ecosystem missing Node 22 interpreter'
+unit=${root_dir}/server/examples/systemd/pm2-'<project>'.service
+[[ -f ${unit} ]] || fail 'missing pm2-<project>.service example'
+grep -q 'User=rende-deploy' "${unit}" || fail 'pm2 unit must run as rende-deploy'
+grep -q 'PM2_HOME=/opt/<project>/.pm2' "${unit}" || fail 'pm2 unit PM2_HOME placeholder missing'
+caller_group=$(awk '/^concurrency:/{c=1} c && /^  group:/{print; exit}' \
+  "${root_dir}/docs/caller-workflow.yml")
+[[ ${caller_group} != *rende-deploy-* ]] \
+  || fail "caller concurrency group collides with the reusable workflow: ${caller_group}"
+grep -q 'only 2xx is success' "${root_dir}/.github/workflows/deploy-project.yml" \
+  || fail 'workflow public health check must reject non-2xx'
+printf 'ok cutover examples\n'
 
 build_re='^[A-Za-z0-9 _./:=@&+-]+$'
 for example in "${root_dir}/server/examples/projects/"*.conf; do
