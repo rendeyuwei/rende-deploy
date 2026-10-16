@@ -84,8 +84,8 @@ Inputs:
 | `node_version` | `22` | Runner Node. Numeric, such as `22` or `22.12.0` |
 | `health_url` | empty | Public `https://` check after SSH. Empty skips it |
 | `health_body` | empty | Exact body for that check |
-| `cache` | `npm` | `npm`, `yarn`, or `pnpm` |
-| `setup_command` | empty | For example `corepack enable` |
+| `cache` | `npm` | `npm`, `yarn`, or `pnpm`. `pnpm` installs pnpm before `setup-node`, because ubuntu-24.04 has no pnpm and the cache step runs `pnpm store path` |
+| `setup_command` | empty | Shell after Node is installed. It runs too late to make `cache: pnpm` work |
 | `install_command` | `npm ci --no-audit --no-fund` | Empty skips |
 | `test_command` | `npm test` | Empty skips |
 | `build_command` | `npm run build` | Runner build. The server build is the config file |
@@ -103,7 +103,7 @@ Secrets, set on each caller repository (a personal account cannot share them). U
 
 There is no `DEPLOY_ENABLED` variable. A successful test on `main` deploys. A caller invoked off `main` fails the deploy job instead of quietly skipping it.
 
-Third-party actions in this repo are pinned to full commit SHAs (`actions/checkout` v7.0.1, `actions/setup-node` v7.1.0). The SSH step is plain `ssh`, not a marketplace action.
+Third-party actions in this repo are pinned to full commit SHAs (`actions/checkout` v7.0.1, `actions/setup-node` v7.1.0, and `pnpm/action-setup` v6.1.0 when `cache` is `pnpm`). The SSH step is plain `ssh`, not a marketplace action.
 
 ## Install on the ECS
 

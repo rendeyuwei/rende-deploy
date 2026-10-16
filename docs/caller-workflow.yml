@@ -48,12 +48,12 @@ jobs:
 #     test_command: npm run typecheck && npm test
 #     health_url: https://rende.fun/shutter/
 #
-# easy-ncp-pic uses pnpm:
+# easy-ncp-pic uses pnpm. The shared workflow installs the packageManager
+# version before setup-node, so a setup_command is not required for the cache.
 #   with:
 #     project: easypic
 #     node_version: "22"
 #     cache: pnpm
-#     setup_command: corepack enable && corepack prepare pnpm@9.12.1 --activate
 #     install_command: pnpm install --frozen-lockfile
 #     test_command: pnpm -r test
 #     build_command: EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build

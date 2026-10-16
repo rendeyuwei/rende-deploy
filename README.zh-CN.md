@@ -82,8 +82,8 @@ uses: rendeyuwei/rende-deploy/.github/workflows/deploy-project.yml@main
 | `node_version` | `22` | runner 上的 Node。只能是数字，例如 `22` 或 `22.12.0` |
 | `health_url` | 空 | SSH 成功后从 runner 发的公网 `https://` 检查。空则跳过 |
 | `health_body` | 空 | 该检查的精确正文 |
-| `cache` | `npm` | `npm`、`yarn` 或 `pnpm` |
-| `setup_command` | 空 | 例如 `corepack enable` |
+| `cache` | `npm` | `npm`、`yarn` 或 `pnpm`。`pnpm` 会在 `setup-node` 之前安装 pnpm，因为 ubuntu-24.04 没有 pnpm，缓存步骤会执行 `pnpm store path` |
+| `setup_command` | 空 | Node 安装之后的 shell。它跑得太晚，不能用来让 `cache: pnpm` 生效 |
 | `install_command` | `npm ci --no-audit --no-fund` | 空则跳过 |
 | `test_command` | `npm test` | 空则跳过 |
 | `build_command` | `npm run build` | runner 上的构建。服务器构建以配置文件为准 |
@@ -101,7 +101,7 @@ Secret 写在每个调用方仓库里（个人账号不能共享 secret）。各
 
 没有 `DEPLOY_ENABLED` 这类开关。`main` 上测试通过就会部署。不在 `main` 上调用时，部署作业失败，而不是静默跳过。
 
-本仓库里的第三方 action 钉死到完整 commit SHA（`actions/checkout` v7.0.1，`actions/setup-node` v7.1.0）。SSH 步骤是系统自带的 `ssh`，不用 marketplace action。
+本仓库里的第三方 action 钉死到完整 commit SHA（`actions/checkout` v7.0.1，`actions/setup-node` v7.1.0，以及 `cache` 为 `pnpm` 时的 `pnpm/action-setup` v6.1.0）。SSH 步骤是系统自带的 `ssh`，不用 marketplace action。
 
 ## 在 ECS 上安装
 
