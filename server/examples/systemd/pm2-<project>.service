@@ -1,0 +1,24 @@
+# Boot a PM2 daemon as rende-deploy. Not installed by install.sh.
+# Copy to /etc/systemd/system/pm2-<project>.service and replace every <project>
+# with the directory name under /opt (shutter-count, easypic, ...).
+# After the first successful `pm2 startOrRestart` of the ecosystem file:
+#   sudo -u rende-deploy env PM2_HOME=/opt/<project>/.pm2 pm2 save
+# Then enable this unit and disable the previous PM2 unit in the same window.
+# ExecStart uses the Node 22 prefix on this host. Change it if `pm2` lives elsewhere.
+
+[Unit]
+Description=PM2 <project> (rende-deploy)
+After=network.target
+
+[Service]
+Type=forking
+User=rende-deploy
+Environment=PM2_HOME=/opt/<project>/.pm2
+Environment=PATH=/opt/node-v22.23.2-linux-x64/bin:/usr/local/bin:/usr/bin:/bin
+PIDFile=/opt/<project>/.pm2/pm2.pid
+Restart=on-failure
+ExecStart=/opt/node-v22.23.2-linux-x64/bin/pm2 resurrect
+ExecStop=/opt/node-v22.23.2-linux-x64/bin/pm2 kill
+
+[Install]
+WantedBy=multi-user.target

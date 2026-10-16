@@ -52,6 +52,8 @@ for conf in "${src}/examples/projects/"*.conf; do
   fi
 done
 
+# *.cjs matches *.config.cjs. PM2 only treats *.config.cjs and ecosystem*
+# as ecosystem files; any other name is executed as a script.
 for eco in "${src}/examples/pm2/"*.cjs; do
   base=$(basename -- "${eco}")
   if [[ -e ${pm2dir}/${base} ]]; then
