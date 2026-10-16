@@ -138,7 +138,7 @@ sudo sshd -t && sudo systemctl reload ssh
 
    应看到 `expected: deploy <project> <40-hex-sha>`。
 
-部署用户的 `PATH` 上需要已有 Node 22，或者把 `path_extra` 指到一个存在的目录。shutter 示例指向 `/opt/node-v22.23.2-linux-x64/bin`。enamel-recipes 的 `better-sqlite3` 仍然需要 `python3`、`make` 和 `g++`。若该 Node 旁边有 `node.h`，接收器会设置 `npm_config_nodedir`，避免从 nodejs.org 下载头文件。
+部署用户的 `PATH` 上需要已有 Node 22，或者把 `path_extra` 指到一个存在的目录。shutter 和 easypic 示例指向 `/opt/node-v22.23.2-linux-x64/bin`。enamel-recipes 的 `better-sqlite3` 仍然需要 `python3`、`make` 和 `g++`。若该 Node 旁边有 `node.h`，接收器会设置 `npm_config_nodedir`，避免从 nodejs.org 下载头文件。
 
 被拒绝和失败的部署会追加到 `<root>/log/failures.log`。SSH 客户端也能看到错误文本。
 
@@ -152,7 +152,7 @@ sudo sshd -t && sudo systemctl reload ssh
 
 **shutter。** PM2 应用名是 `shutter-count`。示例 `server/examples/pm2/shutter-count.config.cjs` 的 `cwd` 是 `/opt/shutter-count/current`，`script` 是 `bin/start.mjs`，`interpreter` 是 `/opt/node-v22.23.2-linux-x64/bin/node`。文件名必须是 `*.config.cjs` 或 `ecosystem*`。其他 `.cjs` 会被 PM2 当成脚本执行，应用不会启动。环境变量占位符与应用默认值一致：`MAX_UPLOAD_MB=50`、`TRUST_PROXY=127.0.0.1,::1`、`SHUTTER_APP_DIR=/opt/shutter-count/current`。仓库里的 `npm start` 是 `node dist/src/main.js`。以 `pm2 show shutter-count` 实际在跑的路径为准，然后用 `rende-deploy`、`PM2_HOME=/opt/shutter-count/.pm2` 对该 ecosystem 执行 `pm2 startOrRestart`。本机健康检查是 `http://127.0.0.1:3020/shutter/api/health`。`GET /shutter` 返回 308，curl 会把这个状态当成成功。开机单元 `server/examples/systemd/pm2-<project>.service`（或 `pm2-shutter-count.service`）以 `rende-deploy` 运行 PM2，`PM2_HOME=/opt/shutter-count/.pm2`。它不会自动安装。现网 shutter 接收器还会核对 GitHub Actions 的 run id；这套共享接收器不核对。
 
-**easypic。** 现网进程是 root 的 PM2 应用 `easypic-api`，监听 `127.0.0.1:3010`。nginx 从 `/var/www/easypic` 提供 HTML，不是从 release 目录。这个接收器从 `/opt/easypic/current` 重启 PM2，不会 rsync 到 `/var/www`。在 nginx 改为指向 release（或你愿意让这个用户执行的复制步骤）之前，静态文件不会更新。`/etc/easypic/easypic.env` 现在是 root 的 `0600`；`deploy/start-api.sh` 会 source 它，所以新的 PM2 守护进程启动前，`rende-deploy` 必须能读这个文件。在这次切换完成前，保留 root 的 PM2 进程。
+**easypic。** PM2 应用 `easypic-api`，监听 `127.0.0.1:3010`。`path_extra` 是 `/opt/node-v22.23.2-linux-x64/bin`。构建是 `pnpm install --frozen-lockfile`，然后 `EASYPIC_DEPLOY_PREFIX=easypic pnpm -r build`，再 `pnpm --filter @easypic/database migrate /var/lib/easypic/easypic.sqlite`。`pnpm -r build` 会带上 `@easypic/image-engine`；逐个 `--filter` 会漏掉它。migrate 需要这个 sqlite 路径，数据库留在 `releases/` 外面。Nginx 把 `/easypic/` alias 到 `/opt/easypic/current/packages/web-app/dist`，把 `/easypic/admin/` alias 到 `/opt/easypic/current/packages/admin-app/dist`，不再从 `/var/www/easypic` 提供页面。`/etc/easypic/easypic.env` 是 root 的 `0600`；`deploy/start-api.sh` 会 source 它，所以 `rende-deploy` 必须能读这个文件。
 
 ## 接入一个新项目
 
